@@ -101,11 +101,7 @@ __ALPHA_LEVELS = {
     18: 0.3,
 }
 
-__SIZES = {
-    'l': (100, 100),
-    'm': (150, 150),
-    'b': (200, 200)
-}
+__SIZES = {"l": (100, 100), "m": (150, 150), "b": (200, 200)}
 
 ########################################################################################################################
 
@@ -168,30 +164,44 @@ def __create_brightness_temparature_levels(df):
 
 def __create_viirs_projection(
     projection_type: str,
-    sattelite_height: float,
+    satellite_height=35800.0,
     central_latitude=0.0,
-    central_longitude=0.0
+    central_longitude=0.0,
 ):
-    """
+    """Creates a cartopy.crs object;
 
     Args:
+        projection_type (str):
+        satellite_height (float):
+        central_longitude (float):
+        central_latitude (float):
 
     Returns:
         cartopy.crs.Projection: a Cartopy projection object;
     """
 
-    TWO_DIM = {}
-    THREE_DIM = {}
-    projection = (
-        CARTOPY_PROJECTIONS[projecton_type]
-        if projection_type in CARTOPY_PROJECTIONS
+    __longitude_only = [
+        "platecarree",
+        "miller",
+        "mollweide",
+        "orthographic",
+        "robinson",
+        "geostationary",
+        "",
+    ]
+
+    projection_cls = (
+        __CARTOPY_PROJECTIONS[projection_type]
+        if projection_type in __CARTOPY_PROJECTIONS
         else PlateCarree
     )
 
-    if project_type == "nearside":
-        projection = NearSide()
+    if projection_type in __longitude_only:
+        return projection_cls(central_longitude=central_longitude)
 
-    return projection
+    return projection_cls(
+        central_longitude=central_longitude, central_latitude=central_latitude
+    )
 
 
 ########################################################################################################################
@@ -207,6 +217,13 @@ def cli():
 
 
 @click.command()
+def test_command():
+    """ """
+    projection = __create_viirs_projection("mollweide")
+    print(type(projection))
+
+
+@click.command()
 @click.argument("path")
 def msg_scene_info(path):
     """ """
@@ -216,7 +233,7 @@ def msg_scene_info(path):
     scn.load(scn.available_dataset_names())
     dataset = scn.to_xarray_dataset()
 
-    print("Available datasets: " + ''.join(scn.available_dataset_names()))
+    print("Available datasets: " + "".join(scn.available_dataset_names()))
     print("Satellite altitude: " + str(dataset.satellite_altitude))
     print("Satellite longitude: " + str(dataset.satellite_longitude))
     print("Satellite latitude: " + str(dataset.satellite_latitude))
@@ -251,23 +268,32 @@ def msg2img(
 
 @click.command()
 @click.argument("path")
-@click.option("--output", "-o", help="Output file name")
-@click.option("--channel", "-c", help=CHANNEL_HELP)
-@click.option("--projection", "-p", help=PROJECTION_HELP)
-@click.option("--image-size", "-s", help="Output image size (s, m or b)")
-@click.option("--stock-image", is_flag=True, help="Boolean option - draw background map")
+@click.option("--output", "-o", default="sample.png", help="Output file name")
+@click.option("--channel", "-c", default="ir108", help=CHANNEL_HELP)
+@click.option("--projection", "-p", default="platecarree", help=PROJECTION_HELP)
+@click.option("--view-longitude", default=None, help="")
+@click.option("--view-latitude", default=None, help="")
+@click.option("--image-size", "-s", default="m", help="Output image size (s, m or b)")
+@click.option(
+    "--stock-image", is_flag=True, help="Boolean option - draw background map"
+)
 @click.option("--coastlines", is_flag=True, help="Boolean option - draw coastlines")
 @click.option("--nightshade", is_flag=False, help="")
-@click.option("--no-water", is_flag=False, help="")
+@click.option("--no-water", is_flag=True, help="")
+@click.option("--grid", is_flag=True, help="")
 def msg2cartopy(
     path,
     output=None,
     channel="ir108",
     projection="platecarree",
+    view_longitude=None,
+    view_latitude=None,
     image_size="m",
     stock_image=True,
     coastlines=True,
+    nightshade=False,
     no_water=False,
+    grid=True,
 ):
     """ Plot MSG HRIT file via Cartopy library """
 
@@ -280,7 +306,7 @@ def msg2cartopy(
     scn = Scene(reader="seviri_l1b_hrit", filenames=filenames)
     scn.load([channel])
 
-    figsize = __SIZES[image_size] if image_size in __SIZES.keys else __SIZES['m']
+    figsize = __SIZES[image_size] if image_size in __SIZES.keys() else __SIZES["m"]
 
     # xarray dataset (priomarily coordinates and brightness temperature values);
     dataset = scn.to_xarray_dataset()
@@ -289,6 +315,9 @@ def msg2cartopy(
     satellite_altitude = dataset.satellite_altitude
     satellite_longitude = dataset.satellite_longitude
     satellite_latitude = dataset.satellite_latitude
+
+    view_longitude = view_longitude if view_longitude else satellite_longitude
+    view_latitude = view_latitude if view_latitude else satellite_latitude
 
     coords = dataset.coords
     coords_dataset = coords.to_dataset()
@@ -313,25 +342,27 @@ def msg2cartopy(
 
     levels = __create_brightness_temparature_levels(dataframe)
 
-    # base_projection = (
-    #     CARTOPY_PROJECTIONS[projection]
-    #     if projection in CARTOPY_PROJECTIONS.keys()
-    #     else PlateCarree
-    # )
-
     ####################
 
-    figure = plt.figure(figsize=(100, 100))
-    ax = plt.axes(projection=base_projection())
+    map_projection = __create_viirs_projection(
+        projection,
+        satellite_height=satellite_altitude,
+        central_longitude=view_longitude,
+        central_latitude=view_latitude,
+    )
 
-    # creating map projection object;
-    base_projection = __create_viirs_projection(projection, sattelite_altitude=satellite_altitude, central_longitude=sattelite_longitude, central_latitude=satellite_latitude)
+    figure = plt.figure(figsize=(100, 100))
+    ax = plt.axes(projection=map_projection)
 
     # creating MSG projection object;
-    viirs_projection = Geostationary()
+    viirs_projection = Geostationary(central_longitude=satellite_longitude)
 
     if stock_image:
         ax.stock_img()
+
+    if grid:
+        grid_projection_cls = __CARTOPY_PROJECTIONS[projection]
+        ax.gridlines(crs=grid_projection_cls(), linestyle="--", color="cyan", zorder=30)
 
     for number, level in levels.items():
         ax.scatter(
@@ -344,7 +375,8 @@ def msg2cartopy(
             zorder=number,
         )
 
-    plt.savefig("cartopy_sample.png")
+    plt.savefig(output)
+    quit()
 
 
 ########################################################################################################################
@@ -352,6 +384,7 @@ def msg2cartopy(
 cli.add_command(msg_scene_info)
 cli.add_command(msg2img)
 cli.add_command(msg2cartopy)
+cli.add_command(test_command)
 
 ########################################################################################################################
 
